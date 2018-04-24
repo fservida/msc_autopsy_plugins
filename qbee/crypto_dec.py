@@ -7,9 +7,14 @@ import json
 
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
+from Crypto.Util import Padding
 
 
 def prefs_to_aes(prefs_key):
+    """Transforms the kex from the xml file to the final AES key, cf. decompilation of QBee apk.
+    :param prefs_key: Key parsed from xml file as b64 encoded string
+    :return: final aes key as byte string
+    """
     # Split in two the key in the preferences and add the strange text here
     key = prefs_key[0:len(prefs_key) // 2]
     key += "a!k@ES2,g86AX&D8vn2]"
@@ -22,13 +27,25 @@ def prefs_to_aes(prefs_key):
 
 
 def decrypt(value, key):
+    """Decrypts the given value using AES ECB with a blocksize of 16 bytes, removing padding as needed
+    :param value: Encrypted string
+    :type value: str
+    :param key: AES Encryption Key
+    :type key: bytes
+    :return:
+    """
     cypher_text = b64decode_missing_padding(value)
     cipher = AES.new(key, AES.MODE_ECB)
     decrypted = cipher.decrypt(cypher_text)
+    decrypted = Padding.unpad(decrypted, 16)
     return decrypted.decode('utf-8')
 
 
 def b64decode_missing_padding(string):
+    """Decodes strings encoded in base64 but missing padding
+    :param string: base64 encoded string with (possibly) missing padding
+    :return: decoded string
+    """
     pad = len(string) % 4
     string += "=" * pad
     return b64decode(string)
@@ -49,15 +66,20 @@ def parse_xml(file_path):
 
 
 def decrypt_dict(encrypted_dict):
+    """Decrypts a dict of preferences coming from an xml encrypted with the SecurePreferences library
+
+    The values of the dict are filtered to found the possible AES keys, in the case of the custom format used by QBee
+    and Swisscom those are base64 encoded strings of 26 char of length.
+
+    :param encrypted_dict: Dictionary containing the encrypted key and values
+    :return: List of dictionaries with only the decrypted key and values, one dictionary per possible decryption key.
+    """
     prefs_key_candidates = [value for key, value in encrypted_dict.items() if len(value) == 26]
 
-    # print(prefs_key_candidates)
     settings_all = []
     for candidate in prefs_key_candidates:
         # Translate the AES Key
-        prefs_enc_key = candidate
-        aes_key = prefs_to_aes(prefs_enc_key)
-        # print("AES KEY: %s \n" % aes_key)
+        aes_key = prefs_to_aes(candidate)
 
         # Decrypt the actual content
         settings_decrypted = {decrypt(key, aes_key): decrypt(value, aes_key) for key, value in encrypted_dict.items()
