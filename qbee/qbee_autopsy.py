@@ -42,7 +42,6 @@ from javax.swing import JCheckBox, BoxLayout
 from javax.crypto import Cipher
 from javax.crypto.spec import SecretKeySpec
 
-
 from org.sleuthkit.datamodel import SleuthkitCase
 from org.sleuthkit.datamodel import AbstractFile
 from org.sleuthkit.datamodel import ReadContentInputStream
@@ -64,15 +63,15 @@ from org.sleuthkit.autopsy.casemodule.services import Services
 from org.sleuthkit.autopsy.casemodule.services import FileManager
 from org.sleuthkit.autopsy.casemodule.services import Blackboard
 from org.sleuthkit.autopsy.datamodel import ContentUtils
+from org.sleuthkit.datamodel import TskData
 
 import os
-from time import mktime
-from xml.dom import minidom
+from subprocess import Popen, PIPE
+
+import json
 
 from esc_generic import esc_generic_artifacts
 
-from base64 import b64decode, b64encode
-from hashlib import sha256
 
 # Factory that defines the name and details of the module and allows Autopsy
 # to create instances of the modules that will do the analysis.
@@ -146,6 +145,11 @@ class QBeeIngestModule(DataSourceIngestModule):
         # Generic Login Artifacts & Attributes
         esc_generic_artifacts(self, case)
 
+        # Search decrypter exe and load path
+        self.path_to_exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crypto_dec/crypto_dec.exe")
+        if not os.path.exists(self.path_to_exe):
+            raise IngestModuleException("EXE was not found in module folder")
+
         self.context = context
 
     # Where the analysis is done.
@@ -171,8 +175,10 @@ class QBeeIngestModule(DataSourceIngestModule):
         # FileManager API: http://sleuthkit.org/autopsy/docs/api-docs/4.4/classorg_1_1sleuthkit_1_1autopsy_1_1casemodule_1_1services_1_1_file_manager.html
         fileManager = Case.getCurrentCase().getServices().getFileManager()
 
-        qbee_settings_file = fileManager.findFiles(dataSource, "com.swisscom.internetbox_preferences.xml") if self.local_settings.get_parse_settings() else []
-        swisscom_settings_file = fileManager.findFiles(dataSource, "com.swisscom.internetbox_preferences.xml") if self.local_settings.get_parse_settings() else []
+        swisscom_settings_file = fileManager.findFiles(dataSource,
+                                                       "com.swisscom.internetbox_preferences.xml") if self.local_settings.get_parse_settings() else []
+        qbee_settings_file = fileManager.findFiles(dataSource,
+                                                   "com.vestiacom.qbeecamera_preferences.xml") if self.local_settings.get_parse_settings() else []
 
         num_files = len(qbee_settings_file) + len(swisscom_settings_file)
 
@@ -181,6 +187,8 @@ class QBeeIngestModule(DataSourceIngestModule):
         file_count = 0
 
         # Settings
+        tmp_dir = Case.getCurrentCase().getTempDirectory()
+        out_dir = Case.getCurrentCase().getModuleDirectory()
         if self.local_settings.get_parse_settings():
             # Settings File for Qbee App
             for file in qbee_settings_file:
@@ -192,71 +200,131 @@ class QBeeIngestModule(DataSourceIngestModule):
                 self.log(Level.INFO, "Processing file: " + file.getName())
                 file_count += 1
 
-                # # Make an artifact on the blackboard.
-                # # Set the DB file as an "interesting file" : TSK_INTERESTING_FILE_HIT is a generic type of
-                # # artifact.  Refer to the developer docs for other examples.
-                # art = file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
-                # att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
-                #                           QBeeIngestModuleFactory.moduleName, "QBee")
-                # art.addAttribute(att)
 
                 # Write to file (any way to contour this?)
-                lcl_setting_path = os.path.join(Case.getCurrentCase().getTempDirectory(), str(file.getId()) + ".xml")
+                lcl_setting_path = os.path.join(tmp_dir, str(file.getId()) + ".xml")
                 ContentUtils.writeToFile(file, File(lcl_setting_path))
 
-                qbee_settings = minidom.parse(lcl_setting_path)
-                tags = qbee_settings.getElementsByTagName("string")
-                qbee_sec_settings = {str(tag.getAttribute('name')): str(tag.firstChild.data) for tag in tags}
-                print(qbee_sec_settings)
+                out_file_name = file.getName() + "_decrypted.json"
+                dest_json_path = os.path.join(out_dir, out_file_name)
+                pipe = Popen([self.path_to_exe, lcl_setting_path, dest_json_path], stdout=PIPE, stderr=PIPE)
 
-                # Translate the AES Key
-                prefs_key_candidates = [value for key, value in qbee_sec_settings.items() if len(value) == 26]
-                print(prefs_key_candidates)
-                for candidate_key in prefs_key_candidates:
-                    aes_key = prefs_to_aes(candidate_key)
-                    print("AES KEY: %s \n" % b64encode(aes_key))
+                out_text = pipe.communicate()[0]
+                self.log(Level.INFO, "Output from run is ==> " + out_text)
 
-                    cipher = Cipher.getInstance("AES", "BC")
-                    cipher.init(2, SecretKeySpec(aes_key, "AES"))
+                with open(dest_json_path) as json_file:
+                    settings_clear = json.load(json_file)
 
-                    qbee_sec_settings_decrypted = {cipher.doFinal(b64decode_no_padding(key)): cipher.doFinal(b64decode_no_padding(value)) for key, value in
-                                                   qbee_sec_settings.items() if value not in prefs_key_candidates}
-                    print(qbee_sec_settings_decrypted)
-                    self.log(Level.INFO, "Settings: " + str(qbee_sec_settings_decrypted))
+                self.log(Level.INFO, "Settings: " + str(settings_clear))
 
-                # art_type_id = case.getArtifactTypeID("ESC_GENERIC_LOGIN")
-                # art_type = case.getArtifactType("ESC_GENERIC_LOGIN")
-                #
-                # # Artifact
-                # art = file.newArtifact(art_type_id)
-                # # Attributes
-                # att_login_username_id = case.getAttributeType("ESC_GENERIC_LOGIN_USERNAME")
-                # att_login_secret_id = case.getAttributeType("ESC_GENERIC_LOGIN_SECRET")
-                # att_login_secret_type_id = case.getAttributeType("ESC_GENERIC_LOGIN_SECRET_TYPE")
-                # att_login_service_id = case.getAttributeType("ESC_GENERIC_LOGIN_SERVICE")
-                # att_login_remarks_id = case.getAttributeType("ESC_GENERIC_LOGIN_REMARKS")
-                #
-                # att_login_username = BlackboardAttribute(att_login_username_id,
-                #                                          QBeeIngestModuleFactory.moduleName, qbee_logins['username'])
-                # att_login_secret = BlackboardAttribute(att_login_secret_id,
-                #                                        QBeeIngestModuleFactory.moduleName,
-                #                                        qbee_logins['token'])
-                # att_login_secret_type = BlackboardAttribute(att_login_secret_type_id,
-                #                                             QBeeIngestModuleFactory.moduleName, "Oauth2 Token")
-                # att_login_service = BlackboardAttribute(att_login_service_id,
-                #                                         QBeeIngestModuleFactory.moduleName, "QBee")
-                # att_login_remarks = BlackboardAttribute(att_login_remarks_id,
-                #                                         QBeeIngestModuleFactory.moduleName,
-                #                                         "User ID: %s" % qbee_logins['user_id'])
-                #
-                # art.addAttribute(att_login_username)
-                # art.addAttribute(att_login_secret)
-                # art.addAttribute(att_login_secret_type)
-                # art.addAttribute(att_login_service)
-                # art.addAttribute(att_login_remarks)
-                #
-                # IngestServices.getInstance().fireModuleDataEvent(
-                #     ModuleDataEvent(QBeeIngestModuleFactory.moduleName, art_type, None))
+                try:
+                    settings_clear = settings_clear['decrypted_settings'][0]
+                except KeyError:
+                    raise KeyError("JSON File format unknown")
+                except IndexError:
+                    self.log(Level.INFO, "Error: No AES key candidates found while decrypting settings file.")
+                    continue
+
+                json_info = os.stat(dest_json_path)
+                print json_info.st_mtime
+
+                encoding = TskData.EncodingType.valueOf(0)
+                dest_json_rel_path = os.path.relpath(dest_json_path, Case.getCurrentCase().getCaseDirectory())
+                json_file = fileManager.addDerivedFile(out_file_name, dest_json_rel_path, int(json_info.st_size),
+                                                       int(json_info.st_ctime), int(json_info.st_ctime),
+                                                       int(json_info.st_atime), int(json_info.st_mtime), True, file,
+                                                       "QBee Module", "Qbee Module", "0.1", "", encoding)
+
+                art_type_id = case.getArtifactTypeID("ESC_GENERIC_LOGIN")
+                art_type = case.getArtifactType("ESC_GENERIC_LOGIN")
+
+                # Make an artifact on the blackboard.
+                # Set the DB file as an "interesting file" : TSK_INTERESTING_FILE_HIT is a generic type of
+                # artifact.  Refer to the developer docs for other examples.
+                art = json_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
+                att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
+                                          QBeeIngestModuleFactory.moduleName, "QBee")
+                art.addAttribute(att)
+
+                # Artifact
+                art = file.newArtifact(art_type_id)
+                # Attributes
+                att_login_username_id = case.getAttributeType("ESC_GENERIC_LOGIN_USERNAME")
+                att_login_secret_id = case.getAttributeType("ESC_GENERIC_LOGIN_SECRET")
+                att_login_secret_type_id = case.getAttributeType("ESC_GENERIC_LOGIN_SECRET_TYPE")
+                att_login_service_id = case.getAttributeType("ESC_GENERIC_LOGIN_SERVICE")
+
+                att_login_username = BlackboardAttribute(att_login_username_id,
+                                                         QBeeIngestModuleFactory.moduleName, settings_clear['qbeeUser'])
+                att_login_secret = BlackboardAttribute(att_login_secret_id,
+                                                       QBeeIngestModuleFactory.moduleName,
+                                                       settings_clear['qbeePassword'])
+                att_login_secret_type = BlackboardAttribute(att_login_secret_type_id,
+                                                            QBeeIngestModuleFactory.moduleName, "Password")
+                att_login_service = BlackboardAttribute(att_login_service_id,
+                                                        QBeeIngestModuleFactory.moduleName, "QBee")
+
+                art.addAttribute(att_login_username)
+                art.addAttribute(att_login_secret)
+                art.addAttribute(att_login_secret_type)
+                art.addAttribute(att_login_service)
+
+                IngestServices.getInstance().fireModuleDataEvent(
+                    ModuleDataEvent(QBeeIngestModuleFactory.moduleName, art_type, None))
+
+                progressBar.progress(file_count)
+
+            # Settings File for Swisscom Home App
+            for file in swisscom_settings_file:
+
+                # Check if the user pressed cancel while we were busy
+                if self.context.isJobCancelled():
+                    return IngestModule.ProcessResult.OK
+
+                self.log(Level.INFO, "Processing file: " + file.getName())
+                file_count += 1
+
+                # Write to file (any way to contour this?)
+                lcl_setting_path = os.path.join(tmp_dir, str(file.getId()) + ".xml")
+                ContentUtils.writeToFile(file, File(lcl_setting_path))
+
+                out_file_name = file.getName() + "_decrypted.json"
+                dest_json_path = os.path.join(out_dir, out_file_name)
+                pipe = Popen([self.path_to_exe, lcl_setting_path, dest_json_path], stdout=PIPE, stderr=PIPE)
+
+                out_text = pipe.communicate()[0]
+                self.log(Level.INFO, "Output from run is ==> " + out_text)
+
+                with open(dest_json_path) as json_file:
+                    settings_clear = json.load(json_file)
+
+                self.log(Level.INFO, "Settings: " + str(settings_clear))
+
+                try:
+                    settings_clear = settings_clear['decrypted_settings'][0]
+                except KeyError:
+                    raise KeyError("JSON File format unknown")
+                except IndexError:
+                    self.log(Level.INFO, "Error: No AES key candidates found while decrypting settings file.")
+                    continue
+
+                json_info = os.stat(dest_json_path)
+                print json_info.st_mtime
+
+                encoding = TskData.EncodingType.valueOf(0)
+                dest_json_rel_path = os.path.relpath(dest_json_path, Case.getCurrentCase().getCaseDirectory())
+                json_file = fileManager.addDerivedFile(out_file_name, dest_json_rel_path, int(json_info.st_size),
+                                                       int(json_info.st_ctime), int(json_info.st_ctime),
+                                                       int(json_info.st_atime), int(json_info.st_mtime), True, file,
+                                                       "QBee Module", "Qbee Module", "0.1", "", encoding)
+
+                # Make an artifact on the blackboard.
+                # Set the DB file as an "interesting file" : TSK_INTERESTING_FILE_HIT is a generic type of
+                # artifact.  Refer to the developer docs for other examples.
+                art = json_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
+                att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
+                                          QBeeIngestModuleFactory.moduleName, "Swisscom Home App")
+                art.addAttribute(att)
 
                 progressBar.progress(file_count)
 
@@ -276,20 +344,12 @@ class QBeeIngestModuleSettings(IngestModuleIngestJobSettings):
     serialVersionUID = 1L
 
     def __init__(self):
-        self.parse_cache = True
         self.parse_settings = True
-        self.parse_logs = True
-        self.parse_network = True
 
     def getVersionNumber(self):
         return serialVersionUID
 
     # TODO: Define getters and settings for data you want to store from UI
-    def get_parse_cache(self):
-        return self.parse_cache
-
-    def set_parse_cache(self, flag):
-        self.parse_cache = flag
 
     def get_parse_settings(self):
         return self.parse_settings
@@ -298,8 +358,7 @@ class QBeeIngestModuleSettings(IngestModuleIngestJobSettings):
         self.parse_settings = flag
 
     def __str__(self):
-        return "QBee Parser - Settings: Parse_DB = {}, Parse_Settings = {}".format(
-            self.parse_cache, self.parse_settings)
+        return "QBee Parser - Settings: Parse_Settings = {}".format(self.parse_settings)
 
 
 # UI that is shown to user for each ingest job so they can configure the job.
@@ -323,12 +382,6 @@ class QBeeIngestModuleSettingsPanel(IngestModuleIngestJobSettingsPanel):
         self.customizeComponents()
 
     # TODO: Update this for your UI
-    def cache_checkbox_event(self, event):
-        if self.cache_parse_checkbox.isSelected():
-            self.local_settings.set_parse_cache(True)
-        else:
-            self.local_settings.set_parse_cache(False)
-
     def settings_checkbox_event(self, event):
         if self.settings_parse_checkbox.isSelected():
             self.local_settings.set_parse_settings(True)
@@ -338,34 +391,13 @@ class QBeeIngestModuleSettingsPanel(IngestModuleIngestJobSettingsPanel):
     # TODO: Update this for your UI
     def initComponents(self):
         self.setLayout(BoxLayout(self, BoxLayout.Y_AXIS))
-        self.cache_parse_checkbox = JCheckBox("Parse Cached Files", actionPerformed=self.cache_checkbox_event)
-        self.add(self.cache_parse_checkbox)
         self.settings_parse_checkbox = JCheckBox("Parse Setting Files", actionPerformed=self.settings_checkbox_event)
         self.add(self.settings_parse_checkbox)
 
     # TODO: Update this for your UI
     def customizeComponents(self):
-        self.cache_parse_checkbox.setSelected(self.local_settings.get_parse_cache())
         self.settings_parse_checkbox.setSelected(self.local_settings.get_parse_settings())
 
     # Return the settings used
     def getSettings(self):
         return self.local_settings
-
-
-def prefs_to_aes(prefs_key):
-    # Split in two the key in the preferences and add the strange text here
-    key = prefs_key[0:len(prefs_key)/2]
-    key += "a!k@ES2,g86AX&D8vn2]"
-    key += prefs_key[len(prefs_key)/2:]
-
-    # Hash the text to a sha256 fingerprint -> resulting key always 256 bit
-    key_hash = sha256()
-    key_hash.update(key)
-
-    return key_hash.digest()
-
-def b64decode_no_padding(string):
-    pad = len(string) % 4
-    string += "=" * pad
-    return b64decode(string)

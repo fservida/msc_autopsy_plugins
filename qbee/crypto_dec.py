@@ -21,7 +21,7 @@ def prefs_to_aes(prefs_key):
     key += prefs_key[len(prefs_key) // 2:]
 
     # Hash the text to a sha256 fingerprint -> resulting key always 256 bit
-    key_hash = SHA256.new(data=bytes(key, 'utf-8'))
+    key_hash = SHA256.new(data=key.encode('utf-8'))
 
     return key_hash.digest()
 

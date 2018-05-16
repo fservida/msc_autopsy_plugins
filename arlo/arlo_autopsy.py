@@ -167,7 +167,7 @@ class ArloIngestModule(DataSourceIngestModule):
         fileManager = Case.getCurrentCase().getServices().getFileManager()
 
         setting_file = fileManager.findFiles(dataSource, "Phoenix.xml") if self.local_settings.get_parse_settings() else []
-        cache_files = fileManager.findFiles(dataSource, "%.0%", "%/com.netgear.android/cache/%") if self.local_settings.get_parse_settings() else []
+        cache_files = fileManager.findFiles(dataSource, "%.0%", "com.netgear.android") if self.local_settings.get_parse_settings() else []
 
         num_files = len(setting_file) + len(cache_files)
 
@@ -192,10 +192,10 @@ class ArloIngestModule(DataSourceIngestModule):
                 # # Make an artifact on the blackboard.
                 # # Set the DB file as an "interesting file" : TSK_INTERESTING_FILE_HIT is a generic type of
                 # # artifact.  Refer to the developer docs for other examples.
-                # art = file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
-                # att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
-                #                           ArloIngestModuleFactory.moduleName, "Arlo Thumbnails")
-                # art.addAttribute(att)
+                art = file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
+                att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
+                                          ArloIngestModuleFactory.moduleName, "Arlo Thumbnails")
+                art.addAttribute(att)
 
                 progressBar.progress(file_count)
 

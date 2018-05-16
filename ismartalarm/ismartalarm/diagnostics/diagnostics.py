@@ -4,9 +4,9 @@
 # Created by "Francesco Servida"
 # Created on 18.04.18
 
-from pprint import pprint
 import re
-import urllib
+import urllib.parse as urllib
+# import urllib
 from datetime import datetime
 import json
 import base64
@@ -27,7 +27,7 @@ def post_parse(post_dict):
 
     try:
         post_dict['BaseMessage_Decoded'] = base64.b64decode(
-            urllib.unquote(post_dict['post_content']['BaseMessage'].encode("utf8")))
+            urllib.unquote(post_dict['post_content']['BaseMessage'])).decode()
     except KeyError:
         # Post Params do not contain a Base Message
         pass
@@ -88,7 +88,7 @@ def parse_mode_events(events):
             mode_event_dict[event[0]] = [event[1]]
 
     mode_event_dict = {timestamp: events for timestamp, events in mode_event_dict.items() if len(events) == 2 and not (
-    "Mqtt add or mofidy modeid" in events[0] or "Mqtt add or mofidy modeid" in events[1])}
+            "Mqtt add or mofidy modeid" in events[0] or "Mqtt add or mofidy modeid" in events[1])}
 
     mode_events = []
     for events in mode_event_dict.values():
@@ -96,21 +96,22 @@ def parse_mode_events(events):
             if "change modeid" not in event:
                 mode_events.append(event)
 
-    mode_re = re.compile("@(?P<timestamp>.*)::MODEID::(?P<mode_id>\d)")
+    mode_re = re.compile("@(?P<timestamp>.*)::MODEID::(?P<mode_id>\d)?")
     mode_events = [mode_re.match(event).groupdict() for event in mode_events]
 
     for event in mode_events:
-        event["action"] = actions[int(event['mode_id'])]
+        if event['mode_id']:
+            event["action"] = actions[int(event['mode_id'])]
         event["timestamp_iso"] = datetime.fromtimestamp(int(str(int(event["timestamp"], 16))[:10])).isoformat()
 
     return sorted(mode_events, key=lambda x: x['timestamp'])
 
+
 if __name__ == '__main__':
-    with open("../data/server_stream", "rb") as file:
+    with open("../data/log_stream_2018-04-25T11_19_31.txt", "rb") as file:
         stream = file.read()
 
     diag = stream.decode('utf-8', 'ignore')
-    diag = diag.encode('ascii', 'ignore')
     events = diag.split("$")
 
     http_posts_by_path = parse_post_events(events)
