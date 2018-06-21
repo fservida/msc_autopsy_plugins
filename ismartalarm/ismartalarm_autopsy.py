@@ -186,137 +186,140 @@ class ISmartAlarmIngestModule(DataSourceIngestModule):
 
         # Parse DB
         if self.local_settings.get_parse_db():
-            for file in db_files:
+            try:
+                for file in db_files:
 
-                # Check if the user pressed cancel while we were busy
-                if self.context.isJobCancelled():
-                    return IngestModule.ProcessResult.OK
+                    # Check if the user pressed cancel while we were busy
+                    if self.context.isJobCancelled():
+                        return IngestModule.ProcessResult.OK
 
-                self.log(Level.INFO, "Processing file: " + file.getName())
-                file_count += 1
+                    self.log(Level.INFO, "Processing file: " + file.getName())
+                    file_count += 1
 
-                # Make an artifact on the blackboard.
-                # Set the DB file as an "interesting file" : TSK_INTERESTING_FILE_HIT is a generic type of
-                # artifact.  Refer to the developer docs for other examples.
-                art = file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
-                att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
-                                          ISmartAlarmIngestModuleFactory.moduleName, "iSmartAlarm")
-                art.addAttribute(att)
+                    # Make an artifact on the blackboard.
+                    # Set the DB file as an "interesting file" : TSK_INTERESTING_FILE_HIT is a generic type of
+                    # artifact.  Refer to the developer docs for other examples.
+                    art = file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
+                    att = BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME,
+                                              ISmartAlarmIngestModuleFactory.moduleName, "iSmartAlarm")
+                    art.addAttribute(att)
 
-                # Skip file is it is the journal file
-                if "journal" in file.getName():
-                    continue
+                    # Skip file is it is the journal file
+                    if "journal" in file.getName():
+                        continue
 
-                # try:
-                #     # index the artifact for keyword search
-                #     blackboard.indexArtifact(art)
-                # except Blackboard.BlackboardException as e:
-                #     self.log(Level.SEVERE, "Error indexing artifact " + art.getDisplayName())
+                    # try:
+                    #     # index the artifact for keyword search
+                    #     blackboard.indexArtifact(art)
+                    # except Blackboard.BlackboardException as e:
+                    #     self.log(Level.SEVERE, "Error indexing artifact " + art.getDisplayName())
 
-                # Save the DB to disk
-                lcl_db_path = os.path.join(Case.getCurrentCase().getTempDirectory(), str(file.getId()) + ".db")
-                ContentUtils.writeToFile(file, File(lcl_db_path))
+                    # Save the DB to disk
+                    lcl_db_path = os.path.join(Case.getCurrentCase().getTempDirectory(), str(file.getId()) + ".db")
+                    ContentUtils.writeToFile(file, File(lcl_db_path))
 
-                try:
-                    Class.forName("org.sqlite.JDBC").newInstance()
-                    conn = DriverManager.getConnection("jdbc:sqlite:%s" % lcl_db_path)
-                except SQLException as e:
-                    self.log(Level.INFO,
-                             "Could not open database file (not SQLite) recentlyUsedApps.db3 (" + e.getMessage() + ")")
-                    return IngestModule.ProcessResult.OK
+                    try:
+                        Class.forName("org.sqlite.JDBC").newInstance()
+                        conn = DriverManager.getConnection("jdbc:sqlite:%s" % lcl_db_path)
+                    except SQLException as e:
+                        self.log(Level.INFO,
+                                 "Could not open database file (not SQLite) recentlyUsedApps.db3 (" + e.getMessage() + ")")
+                        return IngestModule.ProcessResult.OK
 
-                self.events = []
-                self.devices = {}
+                    self.events = []
+                    self.devices = {}
 
-                try:
-                    stmt = conn.createStatement()
-                    ipu_dairy_sql = 'SELECT date, action, IPUID, logType, sensorName, operator, profileName FROM TB_IPUDairy'
-                    # self.log(Level.INFO, ipu_dairy_sql)
-                    result = stmt.executeQuery(ipu_dairy_sql)
-                    # self.log(Level.INFO, "query TB_IPUDairy table")
-                except SQLException as e:
-                    self.log(Level.INFO, "Error querying database for TB_IPUDairy table (" + e.getMessage() + ")")
-                    return IngestModule.ProcessResult.OK
+                    try:
+                        stmt = conn.createStatement()
+                        ipu_dairy_sql = 'SELECT date, action, IPUID, logType, sensorName, operator, profileName FROM TB_IPUDairy'
+                        # self.log(Level.INFO, ipu_dairy_sql)
+                        result = stmt.executeQuery(ipu_dairy_sql)
+                        # self.log(Level.INFO, "query TB_IPUDairy table")
+                    except SQLException as e:
+                        self.log(Level.INFO, "Error querying database for TB_IPUDairy table (" + e.getMessage() + ")")
+                        return IngestModule.ProcessResult.OK
 
-                while result.next():
-                    event = ISmartEventDB()
-                    row = [
-                        result.getLong('date'),
-                        result.getString('action'),
-                        result.getString('IPUID'),
-                        result.getInt('logType'),
-                        result.getString('sensorName'),
-                        result.getString('operator'),
-                        result.getString('profileName'),
-                    ]
-                    event.parse_ipu(row, self)
-                    self.events.append(event)
+                    while result.next():
+                        event = ISmartEventDB()
+                        row = [
+                            result.getLong('date'),
+                            result.getString('action'),
+                            result.getString('IPUID'),
+                            result.getInt('logType'),
+                            result.getString('sensorName'),
+                            result.getString('operator'),
+                            result.getString('profileName'),
+                        ]
+                        event.parse_ipu(row, self)
+                        self.events.append(event)
 
-                try:
-                    stmt = conn.createStatement()
-                    sensors_diary_sql = 'SELECT sensorID, date, action, model, operator, name, logtype FROM TB_SensorDairy;'
-                    # self.log(Level.INFO, sensors_diary_sql)
-                    result = stmt.executeQuery(sensors_diary_sql)
-                    # self.log(Level.INFO, "query TB_SensorDiary table")
-                except SQLException as e:
-                    self.log(Level.INFO, "Error querying database for TB_SensorDiary table (" + e.getMessage() + ")")
-                    return IngestModule.ProcessResult.OK
+                    try:
+                        stmt = conn.createStatement()
+                        sensors_diary_sql = 'SELECT sensorID, date, action, model, operator, name, logtype FROM TB_SensorDairy;'
+                        # self.log(Level.INFO, sensors_diary_sql)
+                        result = stmt.executeQuery(sensors_diary_sql)
+                        # self.log(Level.INFO, "query TB_SensorDiary table")
+                    except SQLException as e:
+                        self.log(Level.INFO, "Error querying database for TB_SensorDiary table (" + e.getMessage() + ")")
+                        return IngestModule.ProcessResult.OK
 
-                while result.next():
-                    event = ISmartEventDB()
-                    row = [
-                        result.getLong('date'),
-                        result.getString('sensorID'),
-                        result.getString('action'),
-                        result.getString('model'),
-                        result.getString('operator'),
-                        result.getString('name'),
-                        result.getString('logtype'),
-                    ]
-                    event.parse_sensors(row, self)
-                    self.events.append(event)
+                    while result.next():
+                        event = ISmartEventDB()
+                        row = [
+                            result.getLong('date'),
+                            result.getString('sensorID'),
+                            result.getString('action'),
+                            result.getString('model'),
+                            result.getString('operator'),
+                            result.getString('name'),
+                            result.getString('logtype'),
+                        ]
+                        event.parse_sensors(row, self)
+                        self.events.append(event)
 
-                art_type_id = case.getArtifactTypeID("ESC_IOT_ISMARTALARM")
-                art_type = case.getArtifactType("ESC_IOT_ISMARTALARM")
+                    art_type_id = case.getArtifactTypeID("ESC_IOT_ISMARTALARM")
+                    art_type = case.getArtifactType("ESC_IOT_ISMARTALARM")
 
-                for event in self.events:
-                    # Artifact
-                    art = file.newArtifact(art_type_id)
-                    # Attributes
-                    att_event_name_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_NAME")
-                    att_event_date_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_DATE")
-                    att_event_type_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_TYPE")
-                    att_event_device_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_DEVICE")
-                    att_event_device_type_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_DEVICE_TYPE")
+                    for event in self.events:
+                        # Artifact
+                        art = file.newArtifact(art_type_id)
+                        # Attributes
+                        att_event_name_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_NAME")
+                        att_event_date_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_DATE")
+                        att_event_type_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_TYPE")
+                        att_event_device_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_DEVICE")
+                        att_event_device_type_id = case.getAttributeType("ESC_IOT_ISMART_EVENT_DEVICE_TYPE")
 
-                    att_event_name = BlackboardAttribute(att_event_name_id,
-                                                         ISmartAlarmIngestModuleFactory.moduleName, event.name)
-                    att_event_date = BlackboardAttribute(att_event_date_id,
-                                                         ISmartAlarmIngestModuleFactory.moduleName,
-                                                         int(mktime(event.timestamp.timetuple())))
-                    att_event_type = BlackboardAttribute(att_event_type_id,
-                                                         ISmartAlarmIngestModuleFactory.moduleName, event.event_type)
-                    att_event_device = BlackboardAttribute(att_event_device_id,
-                                                           ISmartAlarmIngestModuleFactory.moduleName, event.device.name)
-                    att_event_device_type = BlackboardAttribute(att_event_device_type_id,
-                                                                ISmartAlarmIngestModuleFactory.moduleName,
-                                                                event.device.device_type)
+                        att_event_name = BlackboardAttribute(att_event_name_id,
+                                                             ISmartAlarmIngestModuleFactory.moduleName, event.name)
+                        att_event_date = BlackboardAttribute(att_event_date_id,
+                                                             ISmartAlarmIngestModuleFactory.moduleName,
+                                                             int(mktime(event.timestamp.timetuple())))
+                        att_event_type = BlackboardAttribute(att_event_type_id,
+                                                             ISmartAlarmIngestModuleFactory.moduleName, event.event_type)
+                        att_event_device = BlackboardAttribute(att_event_device_id,
+                                                               ISmartAlarmIngestModuleFactory.moduleName, event.device.name)
+                        att_event_device_type = BlackboardAttribute(att_event_device_type_id,
+                                                                    ISmartAlarmIngestModuleFactory.moduleName,
+                                                                    event.device.device_type)
 
-                    art.addAttribute(att_event_name)
-                    art.addAttribute(att_event_date)
-                    art.addAttribute(att_event_type)
-                    art.addAttribute(att_event_device)
-                    art.addAttribute(att_event_device_type)
+                        art.addAttribute(att_event_name)
+                        art.addAttribute(att_event_date)
+                        art.addAttribute(att_event_type)
+                        art.addAttribute(att_event_device)
+                        art.addAttribute(att_event_device_type)
 
-                IngestServices.getInstance().fireModuleDataEvent(
-                    ModuleDataEvent(ISmartAlarmIngestModuleFactory.moduleName, art_type, None))
-                # Update the progress bar
-                progressBar.progress(file_count)
+                    IngestServices.getInstance().fireModuleDataEvent(
+                        ModuleDataEvent(ISmartAlarmIngestModuleFactory.moduleName, art_type, None))
+                    # Update the progress bar
+                    progressBar.progress(file_count)
 
-                # Clean Up DB
-                stmt.close()
-                conn.close()
-                os.remove(lcl_db_path)
+                    # Clean Up DB
+                    stmt.close()
+                    conn.close()
+                    os.remove(lcl_db_path)
+            except Exception:
+                self.log(Level.INFO, "There was an error parsing the ismartalarm DB")
 
         # Settings & MQTT
         if self.local_settings.get_parse_settings():

@@ -1,5 +1,4 @@
 from datetime import datetime
-from .database import ISmartAlarmDB
 
 
 class ISmartDevice(object):
@@ -73,6 +72,7 @@ class ISmartEventDB(ISmartEvent):
     }
 
     remote_tag_actions = {
+        0: "HOME",
         1: "ARM",
         2: "DISARM",
         4: "HOME",
@@ -125,11 +125,11 @@ class ISmartEventDB(ISmartEvent):
         self.timestamp = row[0]
 
         log_type = row[3]
-        self.event_type = self.log_types[int(log_type)]
+        self.event_type = self.log_types.get(int(log_type), "Unknown Event Type")  # [int(log_type)]
 
         if log_type == 1:
             # Alarm
-            self.name = self.alarms[int(row[1])]
+            self.name = self.alarms.get(int(row[1]), "Unknown Alarm")
             device = str(row[4])
             device_type = "Contact Sensor" if int(row[1]) == 1 else "Motion Detector"
 
@@ -141,7 +141,7 @@ class ISmartEventDB(ISmartEvent):
 
         elif log_type == 5:
             # Cube Status
-            self.name = self.cube_status[int(row[1])]
+            self.name = self.cube_status.get(int(row[1]), "Unknown Cube Status")
             device = str(row[2])  # Device is IPU
             device_type = "Base Station"
 
@@ -171,7 +171,7 @@ class ISmartEventDB(ISmartEvent):
         log_type = str(row[6])
         if log_type == "1":
             # Remote Tag
-            self.name = self.remote_tag_actions[int(row[2])]
+            self.name = self.remote_tag_actions.get(int(row[2]), "Unknown Action")
             device = str(row[5])
             device_type = "Remote Tag"
             self.event_type = "?User Info?"
@@ -179,7 +179,7 @@ class ISmartEventDB(ISmartEvent):
             action = int(row[2])
             device = str(row[1])
             try:
-                self.name = self.actions[action]
+                self.name = self.actions.get(action, "Unknown")
                 if str(row[3]) == "0":
                     # Model == 0 --> Action 8 is a test of some sort
                     self.name = "Unknown Device Test (Likely Smoke Detector)"
@@ -212,28 +212,37 @@ class ISmartEventDB(ISmartEvent):
         return "Unknown"
 
 
-class ISmartEvents(object):
-    def __init__(self, db):
-        self.events = []
-        self.devices = {}
-        self.db = ISmartAlarmDB(db)
-        self.__parse_actions()
-        self.__parse_sensors()
+if __name__ == '__main__':
+    from database import ISmartAlarmDB
+    from pprint import pprint
 
-    def __parse_actions(self):
-        actions = self.db.parse_actions()
-        for action in actions:
-            event = ISmartEventDB()
-            event.parse_ipu(action, self)
-            self.events.append(event)
+    class ISmartEvents(object):
+        def __init__(self, db):
+            self.events = []
+            self.devices = {}
+            self.db = ISmartAlarmDB(db)
+            self.__parse_actions()
+            self.__parse_sensors()
 
-    def __parse_sensors(self):
-        sensors = self.db.parse_sensors()
-        for sensor_log in sensors:
-            event = ISmartEventDB()
-            event.parse_sensors(sensor_log, self)
-            self.events.append(event)
+        def __parse_actions(self):
+            actions = self.db.parse_actions()
+            for action in actions:
+                event = ISmartEventDB()
+                event.parse_ipu(action, self)
+                self.events.append(event)
 
-    def __iter__(self):
-        for event in self.events:
-            yield event
+        def __parse_sensors(self):
+            sensors = self.db.parse_sensors()
+            for sensor_log in sensors:
+                event = ISmartEventDB()
+                event.parse_sensors(sensor_log, self)
+                self.events.append(event)
+
+        def __iter__(self):
+            for event in self.events:
+                yield event
+
+    ismart = ISmartEvents("../data/iSmartAlarm_DFRWS.DB")
+    pprint(ismart.events)
+
+
