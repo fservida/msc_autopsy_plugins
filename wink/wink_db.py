@@ -31,4 +31,3 @@ for result in cursor.execute("SELECT json FROM Elements WHERE Type == 'activity'
 for date in sorted(activities.keys()):
     activity = activities[date]
     print(activity["date"].isoformat(), activity["device"], activity["device_type"], activity["action"])
-
